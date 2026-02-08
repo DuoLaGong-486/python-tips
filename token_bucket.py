@@ -1,11 +1,16 @@
 """
-Single-file Token Bucket Rate Limiter Implementation
+Single-file Token Bucket Rate Limiter Implementation (Python 3.6 Compatible)
 
 Core Algorithm:
   - Token Refill: tokens = min(capacity, last_tokens + floor(time_elapsed * rate))
   - Rate Limit Check: if cost > tokens: rate limited
   - State Storage: tokens, last_refreshed
   - TTL: 2 * (capacity / rate)
+
+Python 3.6 Compatibility Notes:
+  - Uses regular classes instead of @dataclass decorator
+  - Uses duck typing instead of Protocol
+  - Uses type comments for compatibility
 """
 
 import math
@@ -13,7 +18,6 @@ import threading
 import time
 from collections import OrderedDict
 from datetime import timedelta
-from typing import Any, Dict, Optional, OrderedDict as OrderedDictT, Protocol, Sequence
 
 
 # =============================================================================
@@ -22,92 +26,97 @@ from typing import Any, Dict, Optional, OrderedDict as OrderedDictT, Protocol, S
 
 KeyT = str
 StoreValueT = float
-StoreDictValueT = Dict[KeyT, StoreValueT]
+StoreDictValueT = dict
 
 # TTL State Constants (consistent with original implementation)
-STORE_TTL_STATE_NOT_EXIST: int = 0  # Key does not exist
-STORE_TTL_STATE_NOT_TTL: int = -1   # Key exists but has no expiration (never expires)
+STORE_TTL_STATE_NOT_EXIST = 0  # Key does not exist
+STORE_TTL_STATE_NOT_TTL = -1   # Key exists but has no expiration (never expires)
 
 
 # =============================================================================
-# Lock Protocol
+# Lock Protocol (Duck Typing for Python 3.6)
 # =============================================================================
 
-class LockP(Protocol):
-    """Lock Protocol"""
+class LockMixin:
+    """Lock mixin for Python 3.6 compatibility - duck typing instead of Protocol"""
 
-    def acquire(self) -> bool:
-        ...
+    def acquire(self):
+        # type: () -> bool
+        raise NotImplementedError
 
-    def release(self) -> None:
-        ...
+    def release(self):
+        # type: () -> None
+        raise NotImplementedError
 
-    def __enter__(self) -> "LockP":
-        ...
+    def __enter__(self):
+        # type: () -> LockMixin
+        raise NotImplementedError
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        ...
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # type: (type, type, type) -> None
+        raise NotImplementedError
 
 
 # =============================================================================
-# Configuration Classes
+# Configuration Classes (Python 3.6 compatible - no dataclass)
 # =============================================================================
 
-@dataclass
 class Rate:
     """Rate represents the rate limit configuration"""
 
-    #: Time period for the rate limit
-    period: timedelta
+    def __init__(self, period, limit):
+        # type: (timedelta, int) -> None
+        self.period = period
+        self.limit = limit
 
-    #: Maximum number of requests allowed in the specified time period
-    limit: int
 
-
-@dataclass
 class Quota:
     """Quota represents the quota limit configuration"""
 
-    #: Base rate limit configuration
-    rate: Rate
+    def __init__(self, rate, burst=0):
+        # type: (Rate, int) -> None
+        self.rate = rate
+        self.burst = burst
+        # Computed fields
+        self.period_sec = 0  # type: int
+        self.emission_interval = 0.0  # type: float
+        self.fill_rate = 0.0  # type: float
+        self._post_init()
 
-    #: Burst capacity, allows temporarily exceeding rate limit, default equals limit
-    burst: int = 0
-
-    #: Computed fields
-    period_sec: int = 0
-    emission_interval: float = 0.0
-    fill_rate: float = 0.0
-
-    def __post_init__(self):
+    def _post_init(self):
         self.period_sec = int(self.rate.period.total_seconds())
         self.emission_interval = self.period_sec / self.rate.limit
         self.fill_rate = self.rate.limit / self.period_sec
 
 
-def per_duration(duration: timedelta, limit: int, burst: Optional[int] = None) -> Quota:
+def per_duration(duration, limit, burst=None):
+    # type: (timedelta, int, int) -> Quota
     """Create a quota with specified duration and request limit"""
     if burst is None:
         burst = limit
     return Quota(Rate(period=duration, limit=limit), burst=burst)
 
 
-def per_sec(limit: int, burst: Optional[int] = None) -> Quota:
+def per_sec(limit, burst=None):
+    # type: (int, int) -> Quota
     """Per-second limit"""
     return per_duration(timedelta(seconds=1), limit, burst)
 
 
-def per_min(limit: int, burst: Optional[int] = None) -> Quota:
+def per_min(limit, burst=None):
+    # type: (int, int) -> Quota
     """Per-minute limit"""
     return per_duration(timedelta(minutes=1), limit, burst)
 
 
-def per_hour(limit: int, burst: Optional[int] = None) -> Quota:
+def per_hour(limit, burst=None):
+    # type: (int, int) -> Quota
     """Per-hour limit"""
     return per_duration(timedelta(hours=1), limit, burst)
 
 
-def per_day(limit: int, burst: Optional[int] = None) -> Quota:
+def per_day(limit, burst=None):
+    # type: (int, int) -> Quota
     """Per-day limit"""
     return per_duration(timedelta(days=1), limit, burst)
 
@@ -125,22 +134,26 @@ class MemoryStoreBackend:
     - Thread-safe (protected by lock)
     """
 
-    def __init__(self, max_size: int = 1024):
-        self.max_size: int = max_size
-        self.expire_info: Dict[str, float] = {}
-        self.lock: LockP = threading.Lock()
+    def __init__(self, max_size=1024):
+        # type: (int) -> None
+        self.max_size = max_size  # type: int
+        self.expire_info = {}  # type: dict
+        self.lock = threading.Lock()  # type: threading.Lock
         # Use OrderedDict for LRU
-        self._client: OrderedDictT[KeyT, Any] = OrderedDict()
+        self._client = OrderedDict()  # type: OrderedDict
 
-    def exists(self, key: KeyT) -> bool:
+    def exists(self, key):
+        # type: (KeyT) -> bool
         """Check if key exists"""
         return key in self._client
 
-    def has_expired(self, key: KeyT) -> bool:
+    def has_expired(self, key):
+        # type: (KeyT) -> bool
         """Check if key has expired"""
         return self.ttl(key) == STORE_TTL_STATE_NOT_EXIST
 
-    def ttl(self, key: KeyT) -> int:
+    def ttl(self, key):
+        # type: (KeyT) -> int
         """Return TTL status of key"""
         exp = self.expire_info.get(key)
         if exp is None:
@@ -153,18 +166,21 @@ class MemoryStoreBackend:
             return STORE_TTL_STATE_NOT_EXIST  # Return 0: expired
         return math.ceil(ttl)
 
-    def check_and_evict(self, key: KeyT) -> None:
+    def check_and_evict(self, key):
+        # type: (KeyT) -> None
         """Check if storage is full, evict oldest entry if so (LRU strategy)"""
         if len(self._client) >= self.max_size and not self.exists(key):
             # Pop the oldest entry
             pop_key, _ = self._client.popitem(last=False)
             self.expire_info.pop(pop_key, None)
 
-    def expire(self, key: KeyT, timeout: int) -> None:
+    def expire(self, key, timeout):
+        # type: (KeyT, int) -> None
         """Set expiration time for key"""
         self.expire_info[key] = time.monotonic() + timeout
 
-    def hgetall(self, name: KeyT) -> StoreDictValueT:
+    def hgetall(self, name):
+        # type: (KeyT) -> StoreDictValueT
         """Get all fields and values from hash table"""
         # Check expiration and auto-delete
         if self.has_expired(name):
@@ -181,18 +197,13 @@ class MemoryStoreBackend:
 
         return kv or {}
 
-    def hset(
-        self,
-        name: KeyT,
-        key: Optional[KeyT] = None,
-        value: Optional[StoreValueT] = None,
-        mapping: Optional[StoreDictValueT] = None,
-    ) -> None:
+    def hset(self, name, key=None, value=None, mapping=None):
+        # type: (KeyT, Optional[KeyT], Optional[StoreValueT], Optional[StoreDictValueT]) -> None
         """Set fields and values in hash table"""
         if key is None and not mapping:
             raise ValueError("hset requires key-value pairs")
 
-        kv: StoreDictValueT = {}
+        kv = {}  # type: StoreDictValueT
         if key is not None:
             kv[key] = value
         if mapping:
@@ -211,7 +222,8 @@ class MemoryStoreBackend:
         # Move to end on write (LRU)
         self._client.move_to_end(name)
 
-    def delete(self, key: KeyT) -> bool:
+    def delete(self, key):
+        # type: (KeyT) -> bool
         """Delete key"""
         try:
             self.expire_info.pop(key, None)
@@ -222,24 +234,24 @@ class MemoryStoreBackend:
 
 
 # =============================================================================
-# Result Classes
+# Result Classes (Python 3.6 compatible - no dataclass)
 # =============================================================================
 
-@dataclass
 class RateLimitState:
     """RateLimitState represents the current state of rate limiter for a given key"""
 
-    #: Maximum requests allowed in initial state
-    limit: int
+    __slots__ = ("limit", "remaining", "reset_after", "retry_after")
 
-    #: Maximum requests allowed for given key in current state
-    remaining: int
-
-    #: Seconds until rate limiter returns to initial state
-    reset_after: float
-
-    #: Seconds to retry request, 0 if request is allowed
-    retry_after: float = 0
+    def __init__(self, limit, remaining, reset_after, retry_after=0):
+        # type: (int, int, float, float) -> None
+        #: Maximum requests allowed in initial state
+        self.limit = limit
+        #: Maximum requests allowed for given key in current state
+        self.remaining = remaining
+        #: Seconds until rate limiter returns to initial state
+        self.reset_after = reset_after
+        #: Seconds to retry request, 0 if request is allowed
+        self.retry_after = retry_after
 
 
 class RateLimitResult:
@@ -247,13 +259,16 @@ class RateLimitResult:
 
     __slots__ = ("limited", "_state_values", "_state")
 
-    def __init__(self, limited: bool, state_values: tuple):
-        self.limited: bool = limited
-        self._state_values: tuple = state_values
-        self._state: Optional[RateLimitState] = None
+    def __init__(self, limited, state_values):
+        # type: (bool, tuple) -> None
+        self.limited = limited  # type: bool
+        self._state_values = state_values  # type: tuple
+        self._state = None  # type: Optional[RateLimitState]
 
     @property
-    def state(self) -> RateLimitState:
+    def state(self):
+        # type: () -> RateLimitState
+        """Get rate limit state"""
         if self._state:
             return self._state
         self._state = RateLimitState(*self._state_values)
@@ -267,13 +282,15 @@ class RateLimitResult:
 class BaseAtomicAction:
     """Base class for atomic operations"""
 
-    TYPE: str = ""
-    STORE_TYPE: str = ""
+    TYPE = ""  # type: str
+    STORE_TYPE = ""  # type: str
 
-    def __init__(self, backend: MemoryStoreBackend):
+    def __init__(self, backend):
+        # type: (MemoryStoreBackend) -> None
         self._backend = backend
 
-    def do(self, keys: Sequence[KeyT], args: Optional[Sequence[StoreValueT]]) -> tuple:
+    def do(self, keys, args):
+        # type: (list, Optional[list]) -> tuple
         """Execute atomic operation"""
         raise NotImplementedError
 
@@ -288,12 +305,11 @@ class MemoryLimitAtomicAction(BaseAtomicAction):
     4. If not limited, consume tokens and update state
     """
 
-    TYPE: str = "limit"
-    STORE_TYPE: str = "memory"
+    TYPE = "limit"  # type: str
+    STORE_TYPE = "memory"  # type: str
 
-    def do(
-        self, keys: Sequence[KeyT], args: Optional[Sequence[StoreValueT]]
-    ) -> tuple[int, int]:
+    def do(self, keys, args):
+        # type: (list, Optional[list]) -> tuple
         """Execute token bucket rate limit operation
 
         Args:
@@ -304,27 +320,27 @@ class MemoryLimitAtomicAction(BaseAtomicAction):
             (limited, tokens) - whether rate limited, current token count
         """
         # Pure computation outside lock to reduce serialized section
-        key: str = keys[0]
-        rate: float = args[0]
-        capacity: int = args[1]
-        cost: int = args[2]
-        now: int = int(time.time())
+        key = keys[0]  # type: str
+        rate = args[0]  # type: float
+        capacity = args[1]  # type: int
+        cost = args[2]  # type: int
+        now = int(time.time())  # type: int
 
         with self._backend.lock:
             # Get current bucket state
-            bucket: StoreDictValueT = self._backend.hgetall(key)
-            last_tokens: int = bucket.get("tokens", capacity)
-            last_refreshed: int = bucket.get("last_refreshed", now)
+            bucket = self._backend.hgetall(key)  # type: StoreDictValueT
+            last_tokens = bucket.get("tokens", capacity)  # type: int
+            last_refreshed = bucket.get("last_refreshed", now)  # type: int
 
             # Calculate elapsed time (seconds)
-            time_elapsed: int = max(0, now - last_refreshed)
+            time_elapsed = max(0, now - last_refreshed)  # type: int
 
             # Refill tokens: min(capacity, last_tokens + floor(elapsed * rate))
             # Use floor for consistency with original implementation
-            tokens: int = min(capacity, last_tokens + math.floor(time_elapsed * rate))
+            tokens = min(capacity, last_tokens + math.floor(time_elapsed * rate))  # type: int
 
             # Check if rate limiting is needed
-            limited: int = 1 if tokens < cost else 0
+            limited = 1 if tokens < cost else 0  # type: int
             if limited:
                 return limited, tokens
 
@@ -335,14 +351,14 @@ class MemoryLimitAtomicAction(BaseAtomicAction):
             self._backend.hset(key, mapping={"tokens": tokens, "last_refreshed": now})
 
             # Set expiration to 2x time needed to fill bucket
-            fill_time: float = capacity / rate
+            fill_time = capacity / rate  # type: float
             self._backend.expire(key, math.ceil(2 * fill_time))
 
             return limited, tokens
 
 
 # =============================================================================
-# Token Bucket Rate Limiter
+# Token Bucket Rate Limiter (Python 3.6 compatible)
 # =============================================================================
 
 class TokenBucketRateLimiter:
@@ -356,42 +372,45 @@ class TokenBucketRateLimiter:
     - LRU eviction: uses OrderedDict for least recently used strategy
     """
 
-    KEY_PREFIX: str = "throttled:v1:token_bucket:"
+    KEY_PREFIX = "throttled:v1:token_bucket:"  # type: str
 
-    def __init__(self, quota: Quota, backend: Optional[MemoryStoreBackend] = None):
+    def __init__(self, quota, backend=None):
+        # type: (Quota, Optional[MemoryStoreBackend]) -> None
         """
         Args:
             quota: Quota configuration
             backend: Storage backend, defaults to memory storage
         """
         self.quota = quota
-        self._backend = backend or MemoryStoreBackend()
+        self._backend = backend if backend is not None else MemoryStoreBackend()
         self._atomic_action = MemoryLimitAtomicAction(self._backend)
 
-    def _prepare_key(self, key: str) -> str:
+    def _prepare_key(self, key):
+        # type: (str) -> str
         """Prepare storage key"""
         return "{}{}".format(self.KEY_PREFIX, key)
 
-    def _refill_sec(self, upper: int, remaining: int) -> int:
+    def _refill_sec(self, upper, remaining):
+        # type: (int, int) -> int
         """Calculate seconds needed for bucket to recover to limit"""
         if remaining >= upper:
             return 0
         return math.ceil((upper - remaining) / self.quota.fill_rate)
 
-    def _to_result(
-        self, limited: int, cost: int, tokens: int, capacity: int
-    ) -> RateLimitResult:
+    def _to_result(self, limited, cost, tokens, capacity):
+        # type: (int, int, int, int) -> RateLimitResult
         """Convert rate limit result"""
-        reset_after: int = self._refill_sec(capacity, tokens)
+        reset_after = self._refill_sec(capacity, tokens)  # type: int
         # Can retry when tokens refill to cost
-        retry_after: int = self._refill_sec(cost, tokens) if limited else 0
+        retry_after = self._refill_sec(cost, tokens) if limited else 0  # type: int
 
         return RateLimitResult(
             limited=bool(limited),
             state_values=(capacity, tokens, reset_after, retry_after),
         )
 
-    def limit(self, key: str, cost: int = 1) -> RateLimitResult:
+    def limit(self, key, cost=1):
+        # type: (str, int) -> RateLimitResult
         """
         Perform rate limit check on request
 
@@ -402,9 +421,9 @@ class TokenBucketRateLimiter:
         Returns:
             RateLimitResult: Contains whether rate limited and current state
         """
-        formatted_key: str = self._prepare_key(key)
-        rate: float = self.quota.fill_rate
-        capacity: int = self.quota.burst
+        formatted_key = self._prepare_key(key)  # type: str
+        rate = self.quota.fill_rate  # type: float
+        capacity = self.quota.burst  # type: int
 
         limited, tokens = self._atomic_action.do(
             [formatted_key], [rate, capacity, cost]
@@ -412,7 +431,8 @@ class TokenBucketRateLimiter:
 
         return self._to_result(limited, cost, tokens, capacity)
 
-    def peek(self, key: str) -> RateLimitState:
+    def peek(self, key):
+        # type: (str) -> RateLimitState
         """
         View current rate limit state without modifying state
 
@@ -422,21 +442,21 @@ class TokenBucketRateLimiter:
         Returns:
             RateLimitState: Current rate limit state
         """
-        now: int = int(time.time())
-        formatted_key: str = self._prepare_key(key)
-        rate: float = self.quota.fill_rate
-        capacity: int = self.quota.burst
+        now = int(time.time())  # type: int
+        formatted_key = self._prepare_key(key)  # type: str
+        rate = self.quota.fill_rate  # type: float
+        capacity = self.quota.burst  # type: int
 
         # Get current bucket state
-        bucket: StoreDictValueT = self._backend.hgetall(formatted_key)
-        last_tokens: int = bucket.get("tokens", capacity)
-        last_refreshed: int = bucket.get("last_refreshed", now)
+        bucket = self._backend.hgetall(formatted_key)  # type: StoreDictValueT
+        last_tokens = bucket.get("tokens", capacity)  # type: int
+        last_refreshed = bucket.get("last_refreshed", now)  # type: int
 
         # Calculate elapsed time and refill tokens
-        time_elapsed: int = max(0, now - last_refreshed)
-        tokens: int = min(capacity, last_tokens + math.floor(time_elapsed * rate))
+        time_elapsed = max(0, now - last_refreshed)  # type: int
+        tokens = min(capacity, last_tokens + math.floor(time_elapsed * rate))  # type: int
 
         # Calculate time to fill bucket
-        reset_after: int = math.ceil((capacity - tokens) / rate)
+        reset_after = math.ceil((capacity - tokens) / rate)  # type: int
 
         return RateLimitState(limit=capacity, remaining=tokens, reset_after=reset_after)

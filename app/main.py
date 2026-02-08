@@ -1,38 +1,39 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Response
 
-from token_bucket import per_sec, TokenBucketRateLimiter
-
+from token_bucket import TokenBucketRateLimiter, per_min
 
 app = FastAPI()
-rate_limiter = TokenBucketRateLimiter(per_sec(5, burst=10))
+rate_limiter = TokenBucketRateLimiter(per_min(5, burst=5))
 
 
 @app.get("/healthz")
-def health_check():
+def healthz():
     return {"status": "ok"}
 
 
 @app.post("/echo")
-async def echo(request: Request):
-    payload = await request.json()
-    return {"received": payload}
+async def echo(payload: dict):
+    return {"echo": payload}
 
 
 @app.get("/rate-limited")
-def rate_limited(client_id: str = "anonymous"):
-    result = rate_limiter.limit(client_id)
+def rate_limited(request: Request, response: Response):
+    client_host = request.client.host if request.client else "unknown"
+    result = rate_limiter.limit(client_host)
     state = result.state
-    headers = {
-        "X-RateLimit-Limit": str(state.limit),
-        "X-RateLimit-Remaining": str(state.remaining),
-        "X-RateLimit-Reset": str(state.reset_after),
-        "X-RateLimit-RetryAfter": str(state.retry_after),
-    }
+
+    response.headers["X-RateLimit-Limit"] = str(state.limit)
+    response.headers["X-RateLimit-Remaining"] = str(state.remaining)
+    response.headers["X-RateLimit-Reset"] = str(state.reset_after)
     if result.limited:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "rate limited"},
-            headers=headers,
-        )
-    return JSONResponse(content={"detail": "ok"}, headers=headers)
+        response.headers["Retry-After"] = str(state.retry_after)
+        response.status_code = 429
+        return {
+            "limited": True,
+            "retry_after": state.retry_after,
+        }
+
+    return {
+        "limited": False,
+        "remaining": state.remaining,
+    }

@@ -1,0 +1,11 @@
+# SSE Streaming Example - 依赖包
+
+# 服务器依赖
+fastapi>=0.100.0
+uvicorn>=0.23.0
+
+# 客户端依赖
+requests>=2.31.0
+
+# 可选: 用于测试的 HTTP 客户端
+httpx>=0.24.0
